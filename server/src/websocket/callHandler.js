@@ -6,31 +6,77 @@ export function setupCallWebSocket(server) {
   wss.on("connection", (ws) => {
     console.log("WebSocket client connected");
 
-    ws.on("message", (message) => {
+    // Session state for this connection
+
+    const session = {
+      transcriptHistory: [],
+      isProcessing: false,
+      callStartedAt: null,
+    };
+
+    ws.on("message", (message, isBinary) => {
       try {
+        // AUDIO_CHUNK will be binary data.
+
+        if (isBinary) {
+          console.log("Received audio chunk:", message.length, "bytes");
+          // STT integration will be added in Phase 3.
+          return;
+        }
+
         const payload = JSON.parse(message.toString());
         console.log("Received event:", payload.event);
 
         switch (payload.event) {
           case "START_CALL":
-            ws.send(JSON.stringify({ event: "STATUS", data: "CONNECTED" }));
+            {
+              session.transcriptHistory = [];
+              session.isProcessing = false;
+              session.callStartedAt = new Date();
+            }
+
+            ws.send(
+              JSON.stringify({
+                event: "TRANSCRIPT_UPDATE",
+                data: {
+                  role: "assistant",
+                  text: "Hello! I'm here to help with your health intake. May I know your name?",
+                },
+              }),
+            );
             break;
 
           case "END_CALL":
-            ws.send(JSON.stringify({ event: "CALL_ENDED" }));
+            {
+              const endedAt = new Date();
+
+              console.log("Call ended");
+
+              ws.send(
+                JSON.stringify({
+                  event: "CALL_ENDED",
+                  data: { startedAt: session.callStartedAt, endedAt },
+                }),
+              );
+            }
             break;
 
-          default:
+          default: {
             ws.send(
-              JSON.stringify({ event: "ERROR", message: "Unknown event type" }),
+              JSON.stringify({
+                event: "ERROR",
+                message: `Unknown event type: ${payload.event} `,
+              }),
             );
+          }
         }
       } catch (error) {
-        console.error("Websocket message error:", error);
+        console.error("WebSocket message processing error:", error);
+
         ws.send(
           JSON.stringify({
             event: "ERROR",
-            message: "Invalid Websocket message",
+            message: "Failed to process WebSocket message.",
           }),
         );
       }
@@ -38,6 +84,10 @@ export function setupCallWebSocket(server) {
 
     ws.on("close", () => {
       console.log("Websocket client disconnected");
+    });
+
+    ws.on("error", (error) => {
+      console.error("Websocket error:", error);
     });
   });
 }
