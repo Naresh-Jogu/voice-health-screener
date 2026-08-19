@@ -22,8 +22,6 @@ export function useAudioRecorder(onAudioChunk) {
         }
       };
 
-      // Send audio data in 500ms slices
-      // for lower transmission latency.
       mediaRecorder.start(500);
 
       setIsRecording(true);
@@ -33,15 +31,28 @@ export function useAudioRecorder(onAudioChunk) {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    return new Promise((resolve) => {
+      const mediaRecorder = mediaRecorderRef.current;
 
-      mediaRecorderRef.current.stream
-        .getTracks()
-        .forEach((track) => track.stop());
+      if (!mediaRecorder || mediaRecorder.state === "inactive") {
+        setIsRecording(false);
+        resolve();
+        return;
+      }
 
-      setIsRecording(false);
-    }
+      mediaRecorder.addEventListener(
+        "stop",
+        () => {
+          mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+
+          setIsRecording(false);
+          resolve();
+        },
+        { once: true },
+      );
+
+      mediaRecorder.stop();
+    });
   };
 
   return {

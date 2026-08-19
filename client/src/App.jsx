@@ -14,6 +14,7 @@ function App() {
 
   const { isRecording, startRecording, stopRecording } =
     useAudioRecorder(sendAudioChunk);
+
   const [isCallActive, setIsCallActive] = useState(false);
 
   const startCall = async () => {
@@ -24,16 +25,36 @@ function App() {
         event: "START_CALL",
       });
 
-      await startRecording();
-
       setIsCallActive(true);
     } catch (error) {
       console.error("Failed to start call:", error);
     }
   };
 
+  const startUserTurn = async () => {
+    if (!isCallActive || isRecording) {
+      return;
+    }
+
+    await startRecording();
+  };
+
+  const endUserTurn = async () => {
+    if (!isRecording) {
+      return;
+    }
+
+    await stopRecording();
+
+    sendMessage({
+      event: "END_USER_TURN",
+    });
+  };
+
   const endCall = () => {
-    stopRecording();
+    if (isRecording) {
+      stopRecording();
+    }
 
     sendMessage({
       event: "END_CALL",
@@ -55,6 +76,14 @@ function App() {
 
       <button onClick={startCall} disabled={isCallActive}>
         Start Call
+      </button>
+
+      <button onClick={startUserTurn} disabled={!isCallActive || isRecording}>
+        Start Recording
+      </button>
+
+      <button onClick={endUserTurn} disabled={!isRecording}>
+        Send Answer
       </button>
 
       <button onClick={endCall} disabled={!isCallActive}>
