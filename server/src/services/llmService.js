@@ -68,14 +68,23 @@ export async function getAIResponse(transcriptHistory) {
     ],
 
     temperature: 0.2,
-    max_tokens: 50,
+    max_tokens: 300,
   });
 
-  const rawResponse = response.choices?.[0]?.message?.content?.trim() || "";
+  const choice = response.choices?.[0];
+
+  console.log("GROQ CHOICE:", JSON.stringify(choice, null, 2));
+
+  const rawResponse = choice?.message?.content?.trim() || "";
 
   console.log("RAW LLM RESPONSE:", rawResponse);
 
   if (!rawResponse) {
+    console.error(
+      "LLM returned empty content. Full response:",
+      JSON.stringify(response, null, 2),
+    );
+
     throw new Error("LLM returned no usable response");
   }
 

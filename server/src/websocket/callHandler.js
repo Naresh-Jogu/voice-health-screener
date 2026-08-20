@@ -4,6 +4,7 @@ import { transcribeAudio } from "../services/sttService.js";
 import { getAIResponse } from "../services/llmService.js";
 import { synthesizeSpeech } from "../services/ttsService.js";
 import { generateHealthReport } from "../services/reportService.js";
+import { extractIntakeData } from "../services/intakeService.js";
 
 export function setupCallWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -18,6 +19,14 @@ export function setupCallWebSocket(server) {
       audioChunks: [],
       userTurnCount: 0,
       intakeComplete: false,
+
+      intakeData: {
+        patientName: null,
+        primarySymptom: null,
+        onsetDuration: null,
+        severity: null,
+        associatedSymptoms: null,
+      },
     };
 
     ws.on("message", async (message, isBinary) => {
@@ -48,6 +57,14 @@ export function setupCallWebSocket(server) {
             session.audioChunks = [];
             session.userTurnCount = 0;
             session.intakeComplete = false;
+
+            session.intakeData = {
+              patientName: null,
+              primarySymptom: null,
+              onsetDuration: null,
+              severity: null,
+              associatedSymptoms: null,
+            };
 
             const greeting =
               "Hello! I'm here to help with your health intake. May I know your name?";
@@ -148,10 +165,62 @@ export function setupCallWebSocket(server) {
                 role: "user",
                 content: transcript,
               });
-
               session.userTurnCount += 1;
-
               console.log("User turn:", session.userTurnCount);
+
+              const extractedData = await extractIntakeData(
+                session.transcriptHistory,
+              );
+
+              console.log("EXTRACTED INTAKE DATA:", extractedData);
+
+              session.intakeData = {
+                ...session.intakeData,
+
+                ...(extractedData.patientName !== null && {
+                  patientName: extractedData.patientName,
+                }),
+
+                ...(extractedData.primarySymptom !== null && {
+                  primarySymptom: extractedData.primarySymptom,
+                }),
+
+                ...(extractedData.onsetDuration !== null && {
+                  onsetDuration: extractedData.onsetDuration,
+                }),
+
+                ...(extractedData.severity !== null && {
+                  severity: extractedData.severity,
+                }),
+
+                ...(extractedData.associatedSymptoms !== null && {
+                  associatedSymptoms: extractedData.associatedSymptoms,
+                }),
+              };
+
+              console.log("CURRENT INTAKE DATA:", session.intakeData);
+
+              const requiredFields = [
+                "patientName",
+                "primarySymptom",
+                "onsetDuration",
+                "severity",
+                "associatedSymptoms",
+              ];
+
+              const missingFields = requiredFields.filter(
+                (field) =>
+                  session.intakeData[field] === null ||
+                  session.intakeData[field] === "",
+              );
+
+              console.log("MISSING INTAKE FIELDS:", missingFields);
+
+              if (missingFields.length === 0) {
+                session.intakeComplete = true;
+
+                console.log("ALL INTAKE FIELDS COLLECTED.");
+              }
 
               // --------------------------------
               // 4. Send transcript to frontend
@@ -170,8 +239,9 @@ export function setupCallWebSocket(server) {
               // 5. CHECK IF THIS IS THE FINAL ANSWER
               // ==========================================
 
-              if (session.userTurnCount === 5) {
-                console.log("All 5 intake fields collected.");
+              if (session.intakeComplete) {
+                session.intakeComplete = true;
+                console.log("All intake fields collected.");
 
                 // --------------------------------
                 // Generate final closing response
@@ -215,9 +285,7 @@ export function setupCallWebSocket(server) {
                 // --------------------------------
                 console.log("Generating final health report...");
 
-                const report = await generateHealthReport(
-                  session.transcriptHistory,
-                );
+                const report = await generateHealthReport(session.intakeData);
 
                 console.log("FINAL HEALTH REPORT:", report);
 

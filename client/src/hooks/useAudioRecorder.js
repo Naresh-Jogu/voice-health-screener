@@ -152,8 +152,25 @@ export function useAudioRecorder(onAudioChunk, onSilenceDetected) {
       await audioContext.resume();
 
       mediaRecorder.start(500);
-
       setIsRecording(true);
+
+      setTimeout(() => {
+        if (
+          mediaRecorderRef.current === mediaRecorder &&
+          mediaRecorder.state !== "inactive" &&
+          !isStoppingRef.current
+        ) {
+          console.log("Maximum recording duration reached.");
+
+          isStoppingRef.current = true;
+
+          stopRecording().then(() => {
+            if (onSilenceDetected) {
+              onSilenceDetected();
+            }
+          });
+        }
+      }, 25000);
 
       console.log("Recording started");
 

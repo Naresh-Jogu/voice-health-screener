@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudioRecorder } from "./hooks/useAudioRecorder";
+import "./App.css";
 
 function App() {
   const {
