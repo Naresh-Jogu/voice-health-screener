@@ -1,6 +1,7 @@
 import { WebSocketServer } from "ws";
 import { transcribeAudio } from "../services/sttService.js";
 import { getAIResponse } from "../services/llmService.js";
+import { synthesizeSpeech } from "../services/ttsService.js";
 
 export function setupCallWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -111,33 +112,42 @@ export function setupCallWebSocket(server) {
                 }),
               );
 
-              const agentReplyText = await getAIResponse(
-                session.transcriptHistory,
-              );
+              const aiResponse = await getAIResponse(session.transcriptHistory);
 
-              console.log("AI response:", agentReplyText);
+              const ttsAudioBuffer = await synthesizeSpeech(aiResponse);
+
+              console.log("AI response:", aiResponse);
+              console.log(
+                "Generated TTS audio:",
+                ttsAudioBuffer.length,
+                "bytes",
+              );
 
               session.transcriptHistory.push({
                 role: "assistant",
-                content: agentReplyText,
+                content: aiResponse,
               });
 
               ws.send(
                 JSON.stringify({
                   event: "AGENT_TEXT",
-                  text: agentReplyText,
+                  text: aiResponse,
                 }),
               );
+
+              // Send AI voice audio as a binary WebSocket message
+              ws.send(ttsAudioBuffer, { binary: true });
 
               // Clear audio after successful transcription.
               session.audioChunks = [];
             } catch (error) {
-              console.error("STT processing error:", error);
+              console.error("Voice pipeline processing error:", error);
 
               ws.send(
                 JSON.stringify({
                   event: "ERROR",
-                  message: "Speech recognition failed. Please try again.",
+                  message:
+                    "I couldn't process your response. Please try again.",
                 }),
               );
             } finally {

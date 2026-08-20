@@ -26,15 +26,33 @@ export function useWebSocket() {
         resolve();
       };
 
-      socket.onmessage = (event) => {
+      socket.onmessage = async (event) => {
         try {
+          // Binary message = AI-generated audio
+          if (event.data instanceof Blob) {
+            console.log("Received AI audio:", event.data.size, "bytes");
+
+            const audioUrl = URL.createObjectURL(event.data);
+
+            const audio = new Audio(audioUrl);
+
+            audio.onended = () => {
+              URL.revokeObjectURL(audioUrl);
+            };
+
+            await audio.play();
+
+            return;
+          }
+
+          // Text message = JSON event
           const message = JSON.parse(event.data);
 
           console.log("Server message:", message);
 
           setLastMessage(message);
         } catch (error) {
-          console.error("Failed to parse WebSocket message:", error);
+          console.error("Failed to process WebSocket message:", error);
         }
       };
 
