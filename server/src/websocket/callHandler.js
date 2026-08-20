@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import { transcribeAudio } from "../services/sttService.js";
+import { getAIResponse } from "../services/llmService.js";
 
 export function setupCallWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -107,6 +108,24 @@ export function setupCallWebSocket(server) {
                     role: "user",
                     text: result.transcript,
                   },
+                }),
+              );
+
+              const agentReplyText = await getAIResponse(
+                session.transcriptHistory,
+              );
+
+              console.log("AI response:", agentReplyText);
+
+              session.transcriptHistory.push({
+                role: "assistant",
+                content: agentReplyText,
+              });
+
+              ws.send(
+                JSON.stringify({
+                  event: "AGENT_TEXT",
+                  text: agentReplyText,
                 }),
               );
 
