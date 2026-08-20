@@ -1,7 +1,9 @@
 import { WebSocketServer } from "ws";
+
 import { transcribeAudio } from "../services/sttService.js";
 import { getAIResponse } from "../services/llmService.js";
 import { synthesizeSpeech } from "../services/ttsService.js";
+import { generateHealthReport } from "../services/reportService.js";
 
 export function setupCallWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -14,11 +16,15 @@ export function setupCallWebSocket(server) {
       isProcessing: false,
       callStartedAt: null,
       audioChunks: [],
+      userTurnCount: 0,
+      intakeComplete: false,
     };
 
     ws.on("message", async (message, isBinary) => {
       try {
-        // AUDIO_CHUNK will be binary data.
+        // --------------------------------
+        // AUDIO CHUNK
+        // --------------------------------
         if (isBinary) {
           console.log("Received audio chunk:", message.length, "bytes");
 
@@ -32,25 +38,55 @@ export function setupCallWebSocket(server) {
         console.log("Received event:", payload.event);
 
         switch (payload.event) {
+          // ==========================================
+          // START CALL
+          // ==========================================
           case "START_CALL": {
             session.transcriptHistory = [];
             session.isProcessing = false;
             session.callStartedAt = new Date();
             session.audioChunks = [];
+            session.userTurnCount = 0;
+            session.intakeComplete = false;
+
+            const greeting =
+              "Hello! I'm here to help with your health intake. May I know your name?";
+
+            session.transcriptHistory.push({
+              role: "assistant",
+              content: greeting,
+            });
 
             ws.send(
               JSON.stringify({
                 event: "TRANSCRIPT_UPDATE",
                 data: {
                   role: "assistant",
-                  text: "Hello! I'm here to help with your health intake. May I know your name?",
+                  text: greeting,
                 },
               }),
             );
 
+            // Convert greeting to speech
+            const greetingAudio = await synthesizeSpeech(greeting);
+
+            console.log(
+              "Generated greeting TTS audio:",
+              greetingAudio.length,
+              "bytes",
+            );
+
+            // Send greeting audio
+            ws.send(greetingAudio, {
+              binary: true,
+            });
+
             break;
           }
 
+          // ==========================================
+          // END USER TURN
+          // ==========================================
           case "END_USER_TURN": {
             if (session.isProcessing) {
               ws.send(
@@ -77,15 +113,23 @@ export function setupCallWebSocket(server) {
             session.isProcessing = true;
 
             try {
+              // --------------------------------
+              // 1. Combine audio
+              // --------------------------------
               const audioBuffer = Buffer.concat(session.audioChunks);
 
               console.log("Transcribing audio:", audioBuffer.length, "bytes");
 
+              // --------------------------------
+              // 2. Speech → Text
+              // --------------------------------
               const result = await transcribeAudio(audioBuffer);
 
-              console.log("Transcript:", result.transcript);
+              const transcript = result.transcript?.trim();
 
-              if (!result.transcript?.trim()) {
+              console.log("Transcript:", transcript);
+
+              if (!transcript) {
                 ws.send(
                   JSON.stringify({
                     event: "ERROR",
@@ -97,37 +141,123 @@ export function setupCallWebSocket(server) {
                 break;
               }
 
+              // --------------------------------
+              // 3. Save user message
+              // --------------------------------
               session.transcriptHistory.push({
                 role: "user",
-                content: result.transcript,
+                content: transcript,
               });
 
+              session.userTurnCount += 1;
+
+              console.log("User turn:", session.userTurnCount);
+
+              // --------------------------------
+              // 4. Send transcript to frontend
+              // --------------------------------
               ws.send(
                 JSON.stringify({
                   event: "TRANSCRIPT_UPDATE",
                   data: {
                     role: "user",
-                    text: result.transcript,
+                    text: transcript,
                   },
                 }),
               );
 
+              // ==========================================
+              // 5. CHECK IF THIS IS THE FINAL ANSWER
+              // ==========================================
+
+              if (session.userTurnCount === 5) {
+                console.log("All 5 intake fields collected.");
+
+                // --------------------------------
+                // Generate final closing response
+                // --------------------------------
+                const aiResponse = await getAIResponse(
+                  session.transcriptHistory,
+                );
+
+                console.log("Final AI response:", aiResponse);
+
+                // Save assistant response
+                session.transcriptHistory.push({
+                  role: "assistant",
+                  content: aiResponse,
+                });
+
+                // Send closing text
+                ws.send(
+                  JSON.stringify({
+                    event: "AGENT_TEXT",
+                    text: aiResponse,
+                  }),
+                );
+
+                // Generate TTS
+                const ttsAudioBuffer = await synthesizeSpeech(aiResponse);
+
+                console.log(
+                  "Generated TTS audio:",
+                  ttsAudioBuffer.length,
+                  "bytes",
+                );
+
+                // Send TTS
+                ws.send(ttsAudioBuffer, {
+                  binary: true,
+                });
+
+                // --------------------------------
+                // Generate health report
+                // --------------------------------
+                console.log("Generating final health report...");
+
+                const report = await generateHealthReport(
+                  session.transcriptHistory,
+                );
+
+                console.log("FINAL HEALTH REPORT:", report);
+
+                // --------------------------------
+                // Send report to frontend
+                // --------------------------------
+                ws.send(
+                  JSON.stringify({
+                    event: "SCREENING_COMPLETE",
+                    data: {
+                      report,
+                    },
+                  }),
+                );
+
+                // Clear audio
+                session.audioChunks = [];
+
+                break;
+              }
+
+              // ==========================================
+              // NORMAL CONVERSATION
+              // ==========================================
+
               const aiResponse = await getAIResponse(session.transcriptHistory);
 
-              const ttsAudioBuffer = await synthesizeSpeech(aiResponse);
-
               console.log("AI response:", aiResponse);
-              console.log(
-                "Generated TTS audio:",
-                ttsAudioBuffer.length,
-                "bytes",
-              );
 
+              // --------------------------------
+              // 6. Save AI response
+              // --------------------------------
               session.transcriptHistory.push({
                 role: "assistant",
                 content: aiResponse,
               });
 
+              // --------------------------------
+              // 7. Send AI text
+              // --------------------------------
               ws.send(
                 JSON.stringify({
                   event: "AGENT_TEXT",
@@ -135,10 +265,27 @@ export function setupCallWebSocket(server) {
                 }),
               );
 
-              // Send AI voice audio as a binary WebSocket message
-              ws.send(ttsAudioBuffer, { binary: true });
+              // --------------------------------
+              // 8. AI → Speech
+              // --------------------------------
+              const ttsAudioBuffer = await synthesizeSpeech(aiResponse);
 
-              // Clear audio after successful transcription.
+              console.log(
+                "Generated TTS audio:",
+                ttsAudioBuffer.length,
+                "bytes",
+              );
+
+              // --------------------------------
+              // 9. Send AI audio
+              // --------------------------------
+              ws.send(ttsAudioBuffer, {
+                binary: true,
+              });
+
+              // --------------------------------
+              // 10. Clear audio
+              // --------------------------------
               session.audioChunks = [];
             } catch (error) {
               console.error("Voice pipeline processing error:", error);
@@ -157,6 +304,9 @@ export function setupCallWebSocket(server) {
             break;
           }
 
+          // ==========================================
+          // END CALL
+          // ==========================================
           case "END_CALL": {
             const endedAt = new Date();
 
@@ -175,6 +325,9 @@ export function setupCallWebSocket(server) {
             break;
           }
 
+          // ==========================================
+          // UNKNOWN EVENT
+          // ==========================================
           default: {
             ws.send(
               JSON.stringify({
